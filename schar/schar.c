@@ -1,10 +1,14 @@
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/module.h>
 #include <linux/poll.h>
+
+MODULE_LICENSE("GPL");
 
 #include "schar.h"
 
 static char* schar_name = NULL;
+char schar_buf[1024];
 /* forward declaration for _fops */
 static ssize_t schar_read(struct file *file, char *buf, size_t count, loff_t *offset);
 static ssize_t schar_write(struct file *file, const char *buf, size_t count, loff_t *offset);
@@ -51,10 +55,14 @@ struct file_operations schar_fops = {
 #endif
 
 ssize_t schar_read(struct file *file, char *buf, size_t count, loff_t *offset) {
+//	if (copy_to_user(buf, schar_buf, count))
+//		return -EFAULT;
+	MSG("reading: %s",buf);
 	return 0;
 }
 
 ssize_t schar_write(struct file *file, const char *buf, size_t count, loff_t *offset) {
+	MSG("writting: %s",buf);
 	return 0;
 }
 
@@ -78,16 +86,17 @@ int schar_open(struct inode *inode, struct file *file) {
     //MOD_INC_USE_COUNT; // for 2.4
 	try_module_get(schar_fops.owner); // for 2.6, and module_put(owner)
 
-	MSG("major: %d minor: %d\n", MAJOR(inode->i_rdev), MINOR(inode->i_rdev));
+	MSG("openned: major: %d minor: %d\n", MAJOR(inode->i_rdev), MINOR(inode->i_rdev));
 	return 0;
 }
 
 int schar_release(struct inode *inode, struct file *file) {
-
+	module_put(schar_fops.owner);
+	MSG("released: major: %d minor: %d\n", MAJOR(inode->i_rdev), MINOR(inode->i_rdev));
 	return 0;
 }
 
-int init_module(void) {
+static int __init schar_init(void) {
 	int res;
 
 	if (schar_name == NULL)
@@ -101,3 +110,11 @@ int init_module(void) {
 
 	return res;
 }
+
+static void __exit schar_exit(void) {
+
+}
+
+
+module_init(schar_init);
+module_exit(schar_exit);
