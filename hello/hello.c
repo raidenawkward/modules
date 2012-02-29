@@ -1,5 +1,5 @@
-#include <linux/module.h>//所有模块都需要的头文件
-#include <linux/init.h>//init&exit相关宏
+#include <linux/module.h>//needed by every module
+#include <linux/init.h>//init&exit
 MODULE_LICENSE("GPL"); 
 
 static int __init hello_init (void)
