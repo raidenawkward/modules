@@ -2,13 +2,19 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/poll.h>
+#include <linux/fs.h>
+#include <linux/string.h>
 
 MODULE_LICENSE("GPL");
 
 #include "schar.h"
 
 static char* schar_name = NULL;
-char schar_buf[1024];
+
+#define SCHAR_BUF_SIZE (1024)
+static char schar_buf[SCHAR_BUF_SIZE];
+static int buf_cur = 0;
+
 /* forward declaration for _fops */
 static ssize_t schar_read(struct file *file, char *buf, size_t count, loff_t *offset);
 static ssize_t schar_write(struct file *file, const char *buf, size_t count, loff_t *offset);
@@ -55,15 +61,26 @@ struct file_operations schar_fops = {
 #endif
 
 ssize_t schar_read(struct file *file, char *buf, size_t count, loff_t *offset) {
-//	if (copy_to_user(buf, schar_buf, count))
-//		return -EFAULT;
-	MSG("reading: %s",buf);
-	return 0;
+	ssize_t res = count < SCHAR_BUF_SIZE? count : SCHAR_BUF_SIZE;
+
+	if (copy_to_user(buf, schar_buf, res)) {
+		buf_cur = 0;
+		return -EFAULT;
+	}
+
+	MSG("reading: %s",schar_buf);
+
+	return res;
 }
 
 ssize_t schar_write(struct file *file, const char *buf, size_t count, loff_t *offset) {
-	MSG("writting: %s",buf);
-	return 0;
+	ssize_t res = count < SCHAR_BUF_SIZE? count : SCHAR_BUF_SIZE;
+
+	if (copy_from_user(schar_buf, buf, res))
+		return -EFAULT;
+
+	MSG("writting: %s",schar_buf);
+	return res;
 }
 
 unsigned int schar_poll(struct file *file, poll_table *wait) {
@@ -106,13 +123,22 @@ static int __init schar_init(void) {
 	res = register_chrdev(SCHAR_MAJOR, schar_name, &schar_fops);
 	if (res) {
 		MSG("can't register device with kernel\n");
+	} else {
+		MSG("schar inited\n");
 	}
+
+	memset(schar_buf,0x00,SCHAR_BUF_SIZE);
+	buf_cur = 0;
 
 	return res;
 }
 
 static void __exit schar_exit(void) {
+	unregister_chrdev(SCHAR_MAJOR, schar_name);
 
+	memset(schar_buf,0x00,SCHAR_BUF_SIZE);
+	buf_cur = 0;
+	MSG("schar exited\n");
 }
 
 
