@@ -4,6 +4,7 @@
 #include <linux/poll.h>
 #include <linux/fs.h>
 #include <linux/string.h>
+#include <linux/semaphore.h>
 
 MODULE_LICENSE("GPL");
 
@@ -14,6 +15,7 @@ static char* schar_name = NULL;
 #define SCHAR_BUF_SIZE (1024)
 static char schar_buf[SCHAR_BUF_SIZE];
 static int buf_cur = 0;
+static struct semaphore sem;
 
 /* forward declaration for _fops */
 static ssize_t schar_read(struct file *file, char *buf, size_t count, loff_t *offset);
@@ -61,25 +63,43 @@ struct file_operations schar_fops = {
 #endif
 
 ssize_t schar_read(struct file *file, char *buf, size_t count, loff_t *offset) {
-	ssize_t res = count < SCHAR_BUF_SIZE? count : SCHAR_BUF_SIZE;
+	ssize_t res;
+
+	if (down_interruptible(&sem)) {
+		return -ERESTARTSYS;
+	}
+
+	res = count < SCHAR_BUF_SIZE? count : SCHAR_BUF_SIZE;
 
 	if (copy_to_user(buf, schar_buf, res)) {
 		buf_cur = 0;
+		up(&sem);
 		return -EFAULT;
 	}
 
 	MSG("reading: %s",schar_buf);
 
+	up(&sem);
 	return res;
 }
 
 ssize_t schar_write(struct file *file, const char *buf, size_t count, loff_t *offset) {
-	ssize_t res = count < SCHAR_BUF_SIZE? count : SCHAR_BUF_SIZE;
 
-	if (copy_from_user(schar_buf, buf, res))
+	ssize_t res;
+
+	if (down_interruptible(&sem)) {
+		return -ERESTARTSYS;
+	}
+
+	res = count < SCHAR_BUF_SIZE? count : SCHAR_BUF_SIZE;
+
+	if (copy_from_user(schar_buf, buf, res)) {
+		up(&sem);
 		return -EFAULT;
+	}
 
 	MSG("writting: %s",schar_buf);
+	up(&sem);
 	return res;
 }
 
@@ -123,9 +143,12 @@ static int __init schar_init(void) {
 	res = register_chrdev(SCHAR_MAJOR, schar_name, &schar_fops);
 	if (res) {
 		MSG("can't register device with kernel\n");
+		return res;
 	} else {
 		MSG("schar inited\n");
 	}
+
+	sema_init(&sem,1);
 
 	memset(schar_buf,0x00,SCHAR_BUF_SIZE);
 	buf_cur = 0;
