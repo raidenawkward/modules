@@ -15,6 +15,8 @@ static char* schar_name = NULL;
 #define SCHAR_BUF_SIZE (1024)
 static char schar_buf[SCHAR_BUF_SIZE];
 static int buf_cur = 0;
+
+#define SCHAR_CONCURRENT_ON 0
 static struct semaphore sem;
 
 /* forward declaration for _fops */
@@ -65,9 +67,11 @@ struct file_operations schar_fops = {
 ssize_t schar_read(struct file *file, char *buf, size_t count, loff_t *offset) {
 	ssize_t res;
 
+#if SCHAR_CONCURRENT_ON
 	if (down_interruptible(&sem)) {
 		return -ERESTARTSYS;
 	}
+#endif
 
 	res = count < SCHAR_BUF_SIZE? count : SCHAR_BUF_SIZE;
 
@@ -79,7 +83,9 @@ ssize_t schar_read(struct file *file, char *buf, size_t count, loff_t *offset) {
 
 	MSG("reading: %s",schar_buf);
 
+#if SCHAR_CONCURRENT_ON
 	up(&sem);
+#endif
 	return res;
 }
 
@@ -87,9 +93,11 @@ ssize_t schar_write(struct file *file, const char *buf, size_t count, loff_t *of
 
 	ssize_t res;
 
+#if SCHAR_CONCURRENT_ON
 	if (down_interruptible(&sem)) {
 		return -ERESTARTSYS;
 	}
+#endif
 
 	res = count < SCHAR_BUF_SIZE? count : SCHAR_BUF_SIZE;
 
@@ -99,7 +107,10 @@ ssize_t schar_write(struct file *file, const char *buf, size_t count, loff_t *of
 	}
 
 	MSG("writting: %s",schar_buf);
+
+#if SCHAR_CONCURRENT_ON
 	up(&sem);
+#endif
 	return res;
 }
 
@@ -119,6 +130,11 @@ int schar_mmap(struct file *file, struct vm_area_struct *vma) {
 }
 
 int schar_open(struct inode *inode, struct file *file) {
+#if ! SCHAR_CONCURRENT_ON
+	if (down_interruptible(&sem)) {
+		return -ERESTARTSYS;
+	}
+#endif
 	/* increment usage count */
     //MOD_INC_USE_COUNT; // for 2.4
 	try_module_get(schar_fops.owner); // for 2.6, and module_put(owner)
@@ -128,6 +144,9 @@ int schar_open(struct inode *inode, struct file *file) {
 }
 
 int schar_release(struct inode *inode, struct file *file) {
+#if ! SCHAR_CONCURRENT_ON
+	up(&sem);
+#endif
 	module_put(schar_fops.owner);
 	MSG("released: major: %d minor: %d\n", MAJOR(inode->i_rdev), MINOR(inode->i_rdev));
 	return 0;
