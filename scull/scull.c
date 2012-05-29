@@ -33,19 +33,6 @@ struct scull_qset {
 	struct scull_qset *next;
 };
 
-static void scull_setup_cdev(struct scull_dev *dev, int index)
-{
-	int err, devno = MKDEV(scull_major, scull_minor + index);
-
-	cdev_init(&dev->cdev, &scull_fops);
-	dev->cdev.owner = THIS_MODULE;
-	dev->cdev.ops = &scull_fops;
-	err = cdev_add(&dev->cdev, devno, 1);
-
-	if (err)
-		printk(KERN_NOTICE "Error %d adding scull%d", err, index);
-}
-
 int scull_trim(struct scull_dev *dev)
 {
 	struct scull_qset *next, *dptr;
@@ -70,6 +57,21 @@ int scull_trim(struct scull_dev *dev)
 	return 0;
 }
 
+static int scull_setup_cdev(struct scull_dev *dev, int index)
+{
+	int err, devno = MKDEV(scull_major, scull_minor + index);
+
+	cdev_init(&dev->cdev, &scull_fops);
+	dev->cdev.owner = THIS_MODULE;
+	dev->cdev.ops = &scull_fops;
+	err = cdev_add(&dev->cdev, devno, 1);
+
+	if (err)
+		printk(KERN_NOTICE "Error %d adding scull%d", err, index);
+
+	return err;
+}
+
 int scull_open(struct inode *inode, struct file *filp)
 {
 	struct scull_dev *dev;
@@ -92,7 +94,19 @@ int scull_release(struct inode *inode, struct file *filp)
 
 struct scull_qset* scull_follow(struct scull_dev* dev, int item)
 {
-	return NULL;
+	struct scull_qset *p;
+	int i;
+
+	if (!dev || item < 0)
+		return NULL;
+
+	p = dev->data;
+	i = 0;
+	while(i < item) {
+		p = p->next;
+	}
+
+	return i == item? p : NULL;
 }
 
 ssize_t scull_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
@@ -202,10 +216,11 @@ struct file_operations scull_fops = {
 .release = scull_release,
 };
 
-
 static int __init scull_init(void)
 {
-	return 0;
+	int retval = 0;
+
+	return retval;
 }
 
 static void __exit scull_exit(void)
