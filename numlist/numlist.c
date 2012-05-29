@@ -29,3 +29,6 @@ struct numlist_dev {
 		char *cdata;
 	};
 };
+
+static unsigned int numlist_dev_count = 0;
+struct numlist_dev* numlist_devices;
