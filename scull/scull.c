@@ -7,6 +7,7 @@
 #include <linux/semaphore.h>
 #include <linux/types.h>
 #include <asm/uaccess.h>
+#include <linux/proc_fs.h>
 
 
 struct file_operations scull_fops;
@@ -27,6 +28,8 @@ struct scull_dev {
 	struct semaphore sem;
 	struct cdev cdev;
 };
+static int scull_nr_devs = 0;
+struct scull_dev scull_devices[128];
 
 struct scull_qset {
 	void **data;
@@ -208,6 +211,39 @@ out:
 	return retval;
 }
 
+int scull_read_procmem(char *buf, char **start, off_t offset, int count, int *eof, void *data)
+{
+	int i, j, len = 0;
+	int limit = count - 80;
+
+#if 0
+	for (i = 0; i < 10; ++i) {
+		len += sprintf(buf + len, "line %d\n", i);
+	}
+#else
+	for (i = 0; i < scull_nr_devs && len <= limit; +i) {
+		struct scull_dev *d = &scull_devices[i];
+		struct scull_qset *qs = d->data;
+		if (down_interruptible(&d->sem))
+			return -ERESTARTSYS;
+		len += sprintf(buf + len, "\nDevice %i: qset %i, q %i, sz %li\n",
+			i, d->qset, d->quantum, d->size);
+		for( ; qs && len <= limit; qs = qs->next) {
+			len += sprintf(buf + len, " item at %p, qset at %p\n",
+				qs, qs->data);
+			if (qs->data && !qs->next)
+				for (j = 0; j < d->qset; ++j) {
+					len += sprintf(buf + len, "	%4i: %8p\n",
+						j, qs->data[j]);
+				}
+		}
+		up(&scull_devices[i].sem);
+	}
+	*eof = 1;
+#endif
+	return len;
+}
+
 struct file_operations scull_fops = {
 .owner = THIS_MODULE,
 .read = scull_read,
@@ -220,12 +256,18 @@ static int __init scull_init(void)
 {
 	int retval = 0;
 
+	++scull_nr_devs;
+	create_proc_read_entry("scullmem",
+							0, /* default mode */
+							NULL, /* parent dir */
+							scull_read_procmem,
+							NULL /* client data */);
 	return retval;
 }
 
 static void __exit scull_exit(void)
 {
-
+	remove_proc_entry("scullmem", NULL /* parent dir */);
 }
 
 
