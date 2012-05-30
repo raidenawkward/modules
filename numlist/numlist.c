@@ -7,6 +7,7 @@
 #include <linux/types.h>
 #include <asm/uaccess.h>
 #include <linux/proc_fs.h>
+#include <linux/string.h>
 
 MODULE_LICENSE("GPL");
 
@@ -22,7 +23,7 @@ enum numlist_data_t {
 	NL_DATA_CHAR
 };
 
-static enum numlist_data_t current_type = NL_DATA_INTEGER;
+static enum numlist_data_t current_type = NL_DATA_CHAR;
 
 static char* get_data_type_str(enum numlist_data_t type)
 {
@@ -41,7 +42,6 @@ struct numlist_dev {
 	size_t pos;
 	enum numlist_data_t type;
 	union {
-		float *ddata;
 		int *idata;
 		char *cdata;
 	};
@@ -311,7 +311,8 @@ ssize_t numlist_read(struct file *filp, char __user *buf, size_t count, loff_t *
 		}
 		break;
 	default:
-		return retval;
+		retval = 0;
+		goto out;
 	}
 
 	*f_pos += count_to_read;
@@ -326,12 +327,73 @@ out:
 ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
 	ssize_t retval = 0;
+	ssize_t count_to_write;
 	struct numlist_dev *dev;
+	int *new_idata = NULL;
+	char *new_cdata = NULL;
+	char *data = NULL;
 
 	if (!numlist_dev_current)
 		return -1;
 
+	dev = numlist_dev_current->dev;
+	if (!dev)
+		return -1;
+
+	down_interruptible(&dev->sem);
+
+	switch (dev->type) {
+	case NL_DATA_INTEGER:
+		count_to_write = 1;
+		new_idata = (int*)krealloc(dev->idata, sizeof(int) * (dev->size + count_to_write), GFP_KERNEL);
+		if (!new_idata) {
+			retval = -EFAULT;
+			goto out;
+		}
+		dev->idata = new_idata;
+		dev->size = dev->size + count_to_write;
+
+		data = (char*)kmalloc(sizeof(char) * count, GFP_KERNEL);
+		if (!data) {
+			retval = -EFAULT;
+			goto out;
+		}
+
+		if (copy_from_user(data, buf, count)) {
+			retval = -EFAULT;
+			goto out;
+		}
+
+		if (atoi(data, count, dev->idata + dev->pos)) {
+			retval = -EFAULT;
+			goto out;
+		}
+
+		break;
+	case NL_DATA_CHAR:
+		count_to_write = count;
+		new_cdata = (char*)krealloc(dev->cdata, sizeof(char) * (dev->size + count_to_write), GFP_KERNEL);
+		if (!new_cdata) {
+			retval = -EFAULT;
+			goto out;
+		}
+		dev->cdata = new_cdata;
+		dev->size = dev->size + count_to_write;
+
+		if (copy_from_user(dev->cdata + dev->pos, buf, count_to_write)) {
+			retval = -EFAULT;
+			goto out;
+		}
+
+		break;
+	default:
+		retval = 0;
+		goto out;
+	}
+
 out:
+	if (data)
+		kfree(data);
 	up(&dev->sem);
 	return retval;
 }
