@@ -90,7 +90,7 @@ static int atoi(const char* a, size_t size, int *ret)
 	*ret = 0;
 
 	for (i = size - 1; i >= 0; --i) {
-		n = a[i] - 80;
+		n = a[i] - '0';
 		if (a[i] == '-') {
 			sign = 1;
 			if (i != 0)
@@ -320,6 +320,35 @@ out:
 	return retval;
 }
 
+static int is_char_a_num(char c)
+{
+	if (c >= '0' && c <= '9')
+		return 1;
+
+	if (c >= 'a' && c <= 'z')
+		return 1;
+
+	if (c >= 'A' && c <= 'Z')
+		return 1;
+
+	return 0;
+}
+
+static size_t get_numlist_size_from_str(const char *buf, size_t size)
+{
+	size_t i;
+
+	if (!buf)
+		return 0;
+
+	for (i = 0; i < size; ++i) {
+		if (!is_char_a_num(buf[i]))
+			return i;
+	}
+
+	return 0;
+}
+
 ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
 	ssize_t retval = 0;
@@ -368,10 +397,17 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 			retval = -EFAULT;
 			goto out;
 		}
+		retval = count;
 
 		break;
 	case NL_DATA_CHAR:
-		count_to_write = count;
+		data = (char*)kmalloc(sizeof(char) * count, GFP_KERNEL);
+		if (copy_from_user(data, buf, count)) {
+			retval = -EFAULT;
+			goto out;
+		}
+
+		count_to_write = get_numlist_size_from_str(data, count);
 		if(dev->size == 0)
 			new_cdata = (char*)kmalloc(sizeof(char) * count_to_write, GFP_KERNEL);
 		else
@@ -383,19 +419,17 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 		dev->cdata = new_cdata;
 		dev->size += count_to_write;
 
-		if (copy_from_user(dev->cdata + dev->pos, buf, count_to_write)) {
-			retval = -EFAULT;
-			goto out;
-		}
+		strncpy(dev->cdata + dev->pos, data, count_to_write);
 		dev->pos += count_to_write;
 
+		retval = count_to_write;
+
 		break;
+
 	default:
 		retval = 0;
 		goto out;
 	}
-
-	retval = count;
 
 out:
 	if (data)
@@ -404,14 +438,14 @@ out:
 	return retval;
 }
 
-int numlist_read_procmem(char *buf, char **start, off_t offset, int count, int *eof, void *data)
+int numlist_read_procmem(char *page, char **start, off_t offset, int count, int *eof, void *data)
 {
 	int retval = 0;
 	int current_index = get_node_index(numlist_dev_current);
 	struct numlist_device_node* node = devices;
 	size_t index = 0, i;
 
-	retval += sprintf(buf, "count:%d, current:%d\n\n", numlist_dev_count, current_index);
+	retval += sprintf(page + retval, "count:%d, current:%d\n\n", numlist_dev_count, current_index);
 
 	while (node) {
 		struct numlist_dev *dev = node->dev;
@@ -420,23 +454,24 @@ int numlist_read_procmem(char *buf, char **start, off_t offset, int count, int *
 
 		down_interruptible(&dev->sem);
 
-		retval += sprintf(buf, "%d type: %s(%d)\n", index, get_data_type_str(dev->type), dev->type);
+		retval += sprintf(page + retval, "%d type: %s(%d) size: %d\n", index, get_data_type_str(dev->type), dev->type, dev->size);
 
 		for (i = 0; i < dev->size; ++i) {
 			switch (dev->type) {
 			case NL_DATA_INTEGER:
-				retval += sprintf(buf, "%d", dev->idata[i]);
+				retval += sprintf(page + retval, "%d", dev->idata[i]);
 				break;
 			case NL_DATA_CHAR:
-				retval += sprintf(buf, "%c", dev->cdata[i]);
+				retval += sprintf(page + retval, "%c", dev->cdata[i]);
 				break;
 			default:
 				break;
 			}
-			if (i != dev->size - 1 && i)
-				retval += sprintf(buf, "%c", num_spliter);
+			if (i != dev->size - 1)
+				retval += sprintf(page + retval, "%c", num_spliter);
 		}
 
+		retval += sprintf(page + retval, "\n");
 		node = node->next;
 		++index;
 		up(&dev->sem);
