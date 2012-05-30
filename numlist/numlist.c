@@ -13,8 +13,8 @@ MODULE_LICENSE("GPL");
 
 struct file_operations numlist_fops;
 
-static unsigned int numlist_major = 128;
-static unsigned int numlist_minor = 0;
+static unsigned int numlist_major = 1234;
+static unsigned int numlist_minor = 1;
 struct cdev numlist_cdev;
 
 enum numlist_data_t {
@@ -62,7 +62,7 @@ static char num_spliter = ',';
 
 static size_t itoa(int i, char** ret)
 {
-	size_t count = 0, index = 1;
+	size_t count = 0;
 	int sign = i < 0 ? -1 : 0;
 	int elem = i;
 
@@ -78,14 +78,7 @@ static size_t itoa(int i, char** ret)
 	if (!*ret)
 		return -1;
 
-	if (sign)
-		*ret[0] = '-';
-
-	elem = i;
-	while (elem && index <= count) {
-		*ret[count - index++] = elem % 10;
-		elem = elem / 10;
-	}
+	sprintf(*ret, "%d", i);
 
 	return count;
 }
@@ -94,6 +87,7 @@ static int atoi(const char* a, size_t size, int *ret)
 {
 	int i, n, base = 1;
 	int sign = 0;
+	*ret = 0;
 
 	for (i = size - 1; i >= 0; --i) {
 		n = a[i] - 80;
@@ -117,6 +111,7 @@ struct numlist_dev* numlist_dev_create(enum numlist_data_t type)
 	struct numlist_dev* dev = (struct numlist_dev*)kmalloc(sizeof(struct numlist_dev), GFP_KERNEL);
 	dev->size = 0;
 	dev->pos = 0;
+	dev->type = type;
 
 	switch(dev->type) {
 	case NL_DATA_INTEGER:
@@ -263,8 +258,9 @@ int numlist_open(struct inode *inode, struct file *filp)
 		if (!dev)
 			return -1;
 		retval = numlist_node_add(dev);
-		if (!retval)
-			numlist_dev_current = devices;
+		numlist_dev_current = devices;
+
+		printk(KERN_NOTICE "new device(%s) created", get_data_type_str(dev->type));
 	}
 
 	return retval;
@@ -345,13 +341,16 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 	switch (dev->type) {
 	case NL_DATA_INTEGER:
 		count_to_write = 1;
-		new_idata = (int*)krealloc(dev->idata, sizeof(int) * (dev->size + count_to_write), GFP_KERNEL);
+		if (dev->size == 0)
+			new_idata = (int*)kmalloc(sizeof(int) * count_to_write, GFP_KERNEL);
+		else
+			new_idata = (int*)krealloc(dev->idata, sizeof(int) * (dev->size + count_to_write), GFP_KERNEL);
 		if (!new_idata) {
 			retval = -EFAULT;
 			goto out;
 		}
 		dev->idata = new_idata;
-		dev->size = dev->size + count_to_write;
+		dev->size += count_to_write;
 
 		data = (char*)kmalloc(sizeof(char) * count, GFP_KERNEL);
 		if (!data) {
@@ -363,6 +362,7 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 			retval = -EFAULT;
 			goto out;
 		}
+		dev->pos += count_to_write;
 
 		if (atoi(data, count, dev->idata + dev->pos)) {
 			retval = -EFAULT;
@@ -372,24 +372,30 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 		break;
 	case NL_DATA_CHAR:
 		count_to_write = count;
-		new_cdata = (char*)krealloc(dev->cdata, sizeof(char) * (dev->size + count_to_write), GFP_KERNEL);
+		if(dev->size == 0)
+			new_cdata = (char*)kmalloc(sizeof(char) * count_to_write, GFP_KERNEL);
+		else
+			new_cdata = (char*)krealloc(dev->cdata, sizeof(char) * (dev->size + count_to_write), GFP_KERNEL);
 		if (!new_cdata) {
 			retval = -EFAULT;
 			goto out;
 		}
 		dev->cdata = new_cdata;
-		dev->size = dev->size + count_to_write;
+		dev->size += count_to_write;
 
 		if (copy_from_user(dev->cdata + dev->pos, buf, count_to_write)) {
 			retval = -EFAULT;
 			goto out;
 		}
+		dev->pos += count_to_write;
 
 		break;
 	default:
 		retval = 0;
 		goto out;
 	}
+
+	retval = count;
 
 out:
 	if (data)
@@ -414,7 +420,7 @@ int numlist_read_procmem(char *buf, char **start, off_t offset, int count, int *
 
 		down_interruptible(&dev->sem);
 
-		retval += sprintf(buf, "%d type: %s\n", index, get_data_type_str(dev->type));
+		retval += sprintf(buf, "%d type: %s(%d)\n", index, get_data_type_str(dev->type), dev->type);
 
 		for (i = 0; i < dev->size; ++i) {
 			switch (dev->type) {
@@ -434,7 +440,7 @@ int numlist_read_procmem(char *buf, char **start, off_t offset, int count, int *
 		node = node->next;
 		++index;
 		up(&dev->sem);
-	}
+	} // while
 
 	return retval;
 }

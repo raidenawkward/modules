@@ -183,6 +183,5 @@ static void __exit schar_exit(void) {
 	MSG("schar exited\n");
 }
 
-
 module_init(schar_init);
 module_exit(schar_exit);
