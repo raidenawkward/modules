@@ -422,7 +422,7 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 		strncpy(dev->cdata + dev->pos, data, count_to_write);
 		dev->pos += count_to_write;
 
-		retval = count_to_write;
+		retval = count;
 
 		break;
 
