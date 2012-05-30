@@ -22,6 +22,8 @@ enum numlist_data_t {
 	NL_DATA_CHAR
 };
 
+static enum numlist_data_t current_type = NL_DATA_INTEGER;
+
 static char* get_data_type_str(enum numlist_data_t type)
 {
 	switch(type) {
@@ -36,6 +38,7 @@ static char* get_data_type_str(enum numlist_data_t type)
 
 struct numlist_dev {
 	size_t size;
+	size_t pos;
 	enum numlist_data_t type;
 	union {
 		float *ddata;
@@ -54,12 +57,67 @@ struct numlist_device_node {
 static unsigned int numlist_dev_count = 0;
 static struct numlist_device_node* numlist_dev_current = NULL;
 static struct numlist_device_node* devices = NULL;
+static char num_spliter = ',';
 
+
+static size_t itoa(int i, char** ret)
+{
+	size_t count = 0, index = 1;
+	int sign = i < 0 ? -1 : 0;
+	int elem = i;
+
+	while(elem) {
+		++count;
+		elem = elem / 10;
+	}
+
+	if (sign)
+		++count;
+
+	*ret = (char*)kmalloc(count * sizeof(char), GFP_KERNEL);
+	if (!*ret)
+		return -1;
+
+	if (sign)
+		*ret[0] = '-';
+
+	elem = i;
+	while (elem && index <= count) {
+		*ret[count - index++] = elem % 10;
+		elem = elem / 10;
+	}
+
+	return count;
+}
+
+static int atoi(const char* a, size_t size, int *ret)
+{
+	int i, n, base = 1;
+	int sign = 0;
+
+	for (i = size - 1; i >= 0; --i) {
+		n = a[i] - 80;
+		if (a[i] == '-') {
+			sign = 1;
+			if (i != 0)
+				return -1;
+			continue;
+		}
+		*ret += n * base;
+		base *= 10;
+	}
+	if (sign)
+		*ret = -*ret;
+
+	return 0;
+}
 
 struct numlist_dev* numlist_dev_create(enum numlist_data_t type)
 {
 	struct numlist_dev* dev = (struct numlist_dev*)kmalloc(sizeof(struct numlist_dev), GFP_KERNEL);
 	dev->size = 0;
+	dev->pos = 0;
+
 	switch(dev->type) {
 	case NL_DATA_INTEGER:
 		dev->idata = NULL;
@@ -200,6 +258,15 @@ int numlist_open(struct inode *inode, struct file *filp)
 {
 	int retval = 0;
 
+	if (numlist_dev_count <= 0) {
+		struct numlist_dev *dev = numlist_dev_create(current_type);
+		if (!dev)
+			return -1;
+		retval = numlist_node_add(dev);
+		if (!retval)
+			numlist_dev_current = devices;
+	}
+
 	return retval;
 }
 
@@ -211,14 +278,61 @@ int numlist_release(struct inode *inode, struct file *filp)
 ssize_t numlist_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
 	ssize_t retval = 0;
+	struct numlist_dev *dev;
+	int count_to_read;
+	char* data;
+	size_t size;
 
+	if (!numlist_dev_current)
+		return -1;
+
+	dev = numlist_dev_current->dev;
+	if (!dev)
+		return -1;
+
+	down_interruptible(&dev->sem);
+
+	count_to_read = dev->pos + count >= dev->size? dev->size - dev->pos : count;
+
+	switch (dev->type) {
+	case NL_DATA_INTEGER:
+		count_to_read = 1;
+		size = itoa(dev->idata[dev->pos], &data);
+		if (copy_to_user(buf, data, size)) {
+			retval = -EFAULT;
+			goto out;
+		}
+		break;
+	case NL_DATA_CHAR:
+		size = count_to_read;
+		if (copy_to_user(buf, dev->cdata + dev->pos, size)) {
+			retval = -EFAULT;
+			goto out;
+		}
+		break;
+	default:
+		return retval;
+	}
+
+	*f_pos += count_to_read;
+	dev->pos += count_to_read;
+	retval = size;
+
+out:
+	up(&dev->sem);
 	return retval;
 }
 
 ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
 	ssize_t retval = 0;
+	struct numlist_dev *dev;
 
+	if (!numlist_dev_current)
+		return -1;
+
+out:
+	up(&dev->sem);
 	return retval;
 }
 
@@ -236,6 +350,8 @@ int numlist_read_procmem(char *buf, char **start, off_t offset, int count, int *
 		if (!dev)
 			continue;
 
+		down_interruptible(&dev->sem);
+
 		retval += sprintf(buf, "%d type: %s\n", index, get_data_type_str(dev->type));
 
 		for (i = 0; i < dev->size; ++i) {
@@ -250,11 +366,12 @@ int numlist_read_procmem(char *buf, char **start, off_t offset, int count, int *
 				break;
 			}
 			if (i != dev->size - 1 && i)
-				retval += sprintf(buf, ",");
+				retval += sprintf(buf, "%c", num_spliter);
 		}
 
 		node = node->next;
 		++index;
+		up(&dev->sem);
 	}
 
 	return retval;
