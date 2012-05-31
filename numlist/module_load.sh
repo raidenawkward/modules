@@ -7,6 +7,13 @@ mode="777"
 INSMOD=/sbin/insmod
 RMMOD=/sbin/rmmod
 
+WHO=`whoami`
+if [ "$WHO" != "root" ]
+then
+	echo script needs root permission
+	exit 1
+fi
+
 installed=`lsmod | grep $module`
 if [ ! -z "$installed" ]
 then

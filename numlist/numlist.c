@@ -334,7 +334,23 @@ static int is_char_a_num(char c)
 	return 0;
 }
 
-static size_t get_numlist_size_from_str(const char *buf, size_t size)
+static size_t get_int_list_size_from_str(const char *buf, size_t size, char spliter)
+{
+	size_t retval = 1;
+	size_t i;
+
+	if (!buf || size <= 0)
+		return retval;
+
+	for (i = 0; i < size; ++i) {
+		if (buf[i] == spliter)
+			++retval;
+	}
+
+	return retval;
+}
+
+static size_t get_char_list_size_from_str(const char *buf, size_t size)
 {
 	size_t i;
 
@@ -347,6 +363,89 @@ static size_t get_numlist_size_from_str(const char *buf, size_t size)
 	}
 
 	return 0;
+}
+
+static int str_reverse(char* buf, size_t size)
+{
+	int i;
+	char tmp;
+
+	if (!buf)
+		return -1;
+
+	if (size <= 1)
+		return 0;
+
+	for (i = 0; i < size / 2; ++i) {
+		tmp = buf[i];
+		buf[i] = buf[size - i - 1];
+		buf[size - i - 1] = tmp;
+	}
+
+	return 0;
+}
+
+static size_t user_buf_to_int_list(const char __user *buf, size_t count, int **ret)
+{
+	char* data = NULL;
+	size_t real_size = 0;
+	char spliter = num_spliter;
+	char num_str[64];
+	size_t num_str_size = 0, i;
+	int num;
+
+	data = (char*)kmalloc(sizeof(char) * count, GFP_KERNEL);
+	if (copy_from_user(data, buf, count))
+		goto end;
+
+	real_size = get_int_list_size_from_str(data, count, spliter);
+	*ret = (int*)kmalloc(sizeof(int) * real_size, GFP_KERNEL);
+
+	if (!data || !real_size || !*ret)
+		goto end;
+
+	real_size = 0;
+	memset(num_str, 0x00, sizeof(num_str));
+	for (i = 0; i < count; ++i) {
+		if (data[i] == spliter) {
+			str_reverse(num_str, num_str_size);
+			if (!num_str_size)
+				*ret[real_size++] = 0;
+			else
+				if (!atoi(num_str, num_str_size, &num))
+					*ret[real_size++] = num;
+
+			memset(num_str, 0x00, sizeof(num_str));
+			num_str_size = 0;
+			continue;
+		}
+
+		num_str[num_str_size++] = data[i];
+	}
+
+end:
+	if (data)
+		kfree(data);
+	return real_size;
+}
+
+static size_t user_buf_to_char_list(const char __user *buf, size_t count, char **ret)
+{
+	size_t real_size = 0;
+
+	real_size = get_char_list_size_from_str(buf, count);
+	*ret = (char*)kmalloc(sizeof(char) * real_size, GFP_KERNEL);
+
+	if (!buf || !ret || !real_size || !*ret)
+		goto end;
+
+	if (copy_from_user(*ret, buf, real_size)) {
+		real_size = 0;
+		goto end;
+	}
+
+end:
+	return real_size;
 }
 
 ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
@@ -407,7 +506,7 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 			goto out;
 		}
 
-		count_to_write = get_numlist_size_from_str(data, count);
+		count_to_write = get_char_list_size_from_str(data, count);
 		if(dev->size == 0)
 			new_cdata = (char*)kmalloc(sizeof(char) * count_to_write, GFP_KERNEL);
 		else
