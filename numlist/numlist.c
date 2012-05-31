@@ -451,11 +451,12 @@ end:
 ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
 	ssize_t retval = 0;
-	ssize_t count_to_write;
+	ssize_t count_to_write, i;
 	struct numlist_dev *dev;
 	int *new_idata = NULL;
 	char *new_cdata = NULL;
-	char *data = NULL;
+	char *cdata = NULL;
+	int *idata = NULL;
 
 	if (!numlist_dev_current)
 		return -1;
@@ -468,7 +469,8 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 
 	switch (dev->type) {
 	case NL_DATA_INTEGER:
-		count_to_write = 1;
+		count_to_write = user_buf_to_int_list(buf, count, &idata);
+
 		if (dev->size == 0)
 			new_idata = (int*)kmalloc(sizeof(int) * count_to_write, GFP_KERNEL);
 		else
@@ -480,33 +482,15 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 		dev->idata = new_idata;
 		dev->size += count_to_write;
 
-		data = (char*)kmalloc(sizeof(char) * count, GFP_KERNEL);
-		if (!data) {
-			retval = -EFAULT;
-			goto out;
-		}
-
-		if (copy_from_user(data, buf, count)) {
-			retval = -EFAULT;
-			goto out;
-		}
-		dev->pos += count_to_write;
-
-		if (atoi(data, count, dev->idata + dev->pos)) {
-			retval = -EFAULT;
-			goto out;
+		for (i = 0; i < count_to_write; ++i) {
+			dev->idata[dev->pos++] = idata[i];
 		}
 		retval = count;
 
 		break;
 	case NL_DATA_CHAR:
-		data = (char*)kmalloc(sizeof(char) * count, GFP_KERNEL);
-		if (copy_from_user(data, buf, count)) {
-			retval = -EFAULT;
-			goto out;
-		}
+		count_to_write = user_buf_to_char_list(buf, count, &cdata);
 
-		count_to_write = get_char_list_size_from_str(data, count);
 		if(dev->size == 0)
 			new_cdata = (char*)kmalloc(sizeof(char) * count_to_write, GFP_KERNEL);
 		else
@@ -518,7 +502,7 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 		dev->cdata = new_cdata;
 		dev->size += count_to_write;
 
-		strncpy(dev->cdata + dev->pos, data, count_to_write);
+		strncpy(dev->cdata + dev->pos, cdata, count_to_write);
 		dev->pos += count_to_write;
 
 		retval = count;
@@ -531,8 +515,10 @@ ssize_t numlist_write(struct file *filp, const char __user *buf, size_t count, l
 	}
 
 out:
-	if (data)
-		kfree(data);
+	if (idata)
+		kfree(idata);
+	if (cdata)
+		kfree(cdata);
 	up(&dev->sem);
 	return retval;
 }
